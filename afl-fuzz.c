@@ -7988,14 +7988,17 @@ int main(int argc, char** argv) {
 
   if (optind == argc || !in_dir || !out_dir) usage(argv[0]);
 
+  // 注册各种信号的处理函数
   setup_signal_handlers();
+  // 读取环境变量，做一些简单的检查
   check_asan_opts();
 
-  if (sync_id) fix_up_sync();
+  if (sync_id) _sync();
 
   if (!strcmp(in_dir, out_dir))
     FATAL("Input and output directories can't be the same");
 
+  // 傻逼模式，不插桩
   if (dumb_mode) {
 
     if (crash_mode) FATAL("-C and -n are mutually exclusive");
@@ -8025,10 +8028,12 @@ int main(int argc, char** argv) {
   if (getenv("AFL_LD_PRELOAD"))
     FATAL("Use AFL_PRELOAD instead of AFL_LD_PRELOAD");
 
+  // 保存原始命令行参数
   save_cmdline(argc, argv);
 
   fix_up_banner(argv[optind]);
 
+  // 判断当前是否在tty终端中运行
   check_if_tty();
 
   get_core_count();
@@ -8041,6 +8046,7 @@ int main(int argc, char** argv) {
   check_cpu_governor();
 
   setup_post();
+  // 建立共享内容用于覆盖率统计
   setup_shm();
   init_count_class16();
 

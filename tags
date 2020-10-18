@@ -6,8 +6,8 @@
 !_TAG_PROGRAM_VERSION	5.9~svn20110310	//
 ABORT	debug.h	216;"	d
 ACTF	debug.h	185;"	d
-AFLCoverage	llvm_mode/afl-llvm-pass.so.cc	/^      AFLCoverage() : ModulePass(ID) { }$/;"	f	class:__anon4::AFLCoverage
-AFLCoverage	llvm_mode/afl-llvm-pass.so.cc	/^  class AFLCoverage : public ModulePass {$/;"	c	namespace:__anon4	file:
+AFLCoverage	llvm_mode/afl-llvm-pass.so.cc	/^      AFLCoverage() : ModulePass(ID) { }$/;"	f	class:__anon1::AFLCoverage
+AFLCoverage	llvm_mode/afl-llvm-pass.so.cc	/^  class AFLCoverage : public ModulePass {$/;"	c	namespace:__anon1	file:
 AFL_INIT_ARGV	experimental/argv_fuzzing/argv-fuzz-inl.h	46;"	d
 AFL_INIT_SET0	experimental/argv_fuzzing/argv-fuzz-inl.h	48;"	d
 AFL_LLVM_PASS	llvm_mode/afl-llvm-pass.so.cc	32;"	d	file:
@@ -105,12 +105,12 @@ EXP_ST	afl-fuzz.c	87;"	d	file:
 FANCY_BOXES	config.h	46;"	d
 FATAL	debug.h	206;"	d
 FATAL	libdislocator/libdislocator.so.c	58;"	d	file:
-FAULT_CRASH	afl-fuzz.c	/^  \/* 02 *\/ FAULT_CRASH,$/;"	e	enum:__anon3	file:
-FAULT_ERROR	afl-fuzz.c	/^  \/* 03 *\/ FAULT_ERROR,$/;"	e	enum:__anon3	file:
-FAULT_NOBITS	afl-fuzz.c	/^  \/* 05 *\/ FAULT_NOBITS$/;"	e	enum:__anon3	file:
-FAULT_NOINST	afl-fuzz.c	/^  \/* 04 *\/ FAULT_NOINST,$/;"	e	enum:__anon3	file:
-FAULT_NONE	afl-fuzz.c	/^  \/* 00 *\/ FAULT_NONE,$/;"	e	enum:__anon3	file:
-FAULT_TMOUT	afl-fuzz.c	/^  \/* 01 *\/ FAULT_TMOUT,$/;"	e	enum:__anon3	file:
+FAULT_CRASH	afl-fuzz.c	/^  \/* 02 *\/ FAULT_CRASH,$/;"	e	enum:__anon4	file:
+FAULT_ERROR	afl-fuzz.c	/^  \/* 03 *\/ FAULT_ERROR,$/;"	e	enum:__anon4	file:
+FAULT_NOBITS	afl-fuzz.c	/^  \/* 05 *\/ FAULT_NOBITS$/;"	e	enum:__anon4	file:
+FAULT_NOINST	afl-fuzz.c	/^  \/* 04 *\/ FAULT_NOINST,$/;"	e	enum:__anon4	file:
+FAULT_NONE	afl-fuzz.c	/^  \/* 00 *\/ FAULT_NONE,$/;"	e	enum:__anon4	file:
+FAULT_TMOUT	afl-fuzz.c	/^  \/* 01 *\/ FAULT_TMOUT,$/;"	e	enum:__anon4	file:
 FF	afl-fuzz.c	1009;"	d	file:
 FLIP_BIT	afl-fuzz.c	5164;"	d	file:
 FLIP_BIT	afl-fuzz.c	6688;"	d	file:
@@ -133,7 +133,7 @@ HELPER_PATH	Makefile	/^HELPER_PATH = $(PREFIX)\/lib\/afl$/;"	m
 HELPER_PATH	libdislocator/Makefile	/^HELPER_PATH  = $(PREFIX)\/lib\/afl$/;"	m
 HELPER_PATH	libtokencap/Makefile	/^HELPER_PATH  = $(PREFIX)\/lib\/afl$/;"	m
 HELPER_PATH	llvm_mode/Makefile	/^HELPER_PATH  = $(PREFIX)\/lib\/afl$/;"	m
-ID	llvm_mode/afl-llvm-pass.so.cc	/^      static char ID;$/;"	m	class:__anon4::AFLCoverage	file:
+ID	llvm_mode/afl-llvm-pass.so.cc	/^      static char ID;$/;"	m	class:__anon1::AFLCoverage	file:
 ID	llvm_mode/afl-llvm-pass.so.cc	/^char AFLCoverage::ID = 0;$/;"	m	class:AFLCoverage	file:
 INTERESTING_16	config.h	240;"	d
 INTERESTING_32	config.h	252;"	d
@@ -213,26 +213,26 @@ SP20	afl-fuzz.c	4074;"	d	file:
 SP5	afl-fuzz.c	4072;"	d	file:
 SPLICE_CYCLES	config.h	135;"	d
 SPLICE_HAVOC	config.h	139;"	d
-STAGE_ARITH16	afl-fuzz.c	/^  \/* 07 *\/ STAGE_ARITH16,$/;"	e	enum:__anon1	file:
-STAGE_ARITH32	afl-fuzz.c	/^  \/* 08 *\/ STAGE_ARITH32,$/;"	e	enum:__anon1	file:
-STAGE_ARITH8	afl-fuzz.c	/^  \/* 06 *\/ STAGE_ARITH8,$/;"	e	enum:__anon1	file:
-STAGE_EXTRAS_AO	afl-fuzz.c	/^  \/* 14 *\/ STAGE_EXTRAS_AO,$/;"	e	enum:__anon1	file:
-STAGE_EXTRAS_UI	afl-fuzz.c	/^  \/* 13 *\/ STAGE_EXTRAS_UI,$/;"	e	enum:__anon1	file:
-STAGE_EXTRAS_UO	afl-fuzz.c	/^  \/* 12 *\/ STAGE_EXTRAS_UO,$/;"	e	enum:__anon1	file:
-STAGE_FLIP1	afl-fuzz.c	/^  \/* 00 *\/ STAGE_FLIP1,$/;"	e	enum:__anon1	file:
-STAGE_FLIP16	afl-fuzz.c	/^  \/* 04 *\/ STAGE_FLIP16,$/;"	e	enum:__anon1	file:
-STAGE_FLIP2	afl-fuzz.c	/^  \/* 01 *\/ STAGE_FLIP2,$/;"	e	enum:__anon1	file:
-STAGE_FLIP32	afl-fuzz.c	/^  \/* 05 *\/ STAGE_FLIP32,$/;"	e	enum:__anon1	file:
-STAGE_FLIP4	afl-fuzz.c	/^  \/* 02 *\/ STAGE_FLIP4,$/;"	e	enum:__anon1	file:
-STAGE_FLIP8	afl-fuzz.c	/^  \/* 03 *\/ STAGE_FLIP8,$/;"	e	enum:__anon1	file:
-STAGE_HAVOC	afl-fuzz.c	/^  \/* 15 *\/ STAGE_HAVOC,$/;"	e	enum:__anon1	file:
-STAGE_INTEREST16	afl-fuzz.c	/^  \/* 10 *\/ STAGE_INTEREST16,$/;"	e	enum:__anon1	file:
-STAGE_INTEREST32	afl-fuzz.c	/^  \/* 11 *\/ STAGE_INTEREST32,$/;"	e	enum:__anon1	file:
-STAGE_INTEREST8	afl-fuzz.c	/^  \/* 09 *\/ STAGE_INTEREST8,$/;"	e	enum:__anon1	file:
-STAGE_SPLICE	afl-fuzz.c	/^  \/* 16 *\/ STAGE_SPLICE$/;"	e	enum:__anon1	file:
-STAGE_VAL_BE	afl-fuzz.c	/^  \/* 02 *\/ STAGE_VAL_BE$/;"	e	enum:__anon2	file:
-STAGE_VAL_LE	afl-fuzz.c	/^  \/* 01 *\/ STAGE_VAL_LE,$/;"	e	enum:__anon2	file:
-STAGE_VAL_NONE	afl-fuzz.c	/^  \/* 00 *\/ STAGE_VAL_NONE,$/;"	e	enum:__anon2	file:
+STAGE_ARITH16	afl-fuzz.c	/^  \/* 07 *\/ STAGE_ARITH16,$/;"	e	enum:__anon2	file:
+STAGE_ARITH32	afl-fuzz.c	/^  \/* 08 *\/ STAGE_ARITH32,$/;"	e	enum:__anon2	file:
+STAGE_ARITH8	afl-fuzz.c	/^  \/* 06 *\/ STAGE_ARITH8,$/;"	e	enum:__anon2	file:
+STAGE_EXTRAS_AO	afl-fuzz.c	/^  \/* 14 *\/ STAGE_EXTRAS_AO,$/;"	e	enum:__anon2	file:
+STAGE_EXTRAS_UI	afl-fuzz.c	/^  \/* 13 *\/ STAGE_EXTRAS_UI,$/;"	e	enum:__anon2	file:
+STAGE_EXTRAS_UO	afl-fuzz.c	/^  \/* 12 *\/ STAGE_EXTRAS_UO,$/;"	e	enum:__anon2	file:
+STAGE_FLIP1	afl-fuzz.c	/^  \/* 00 *\/ STAGE_FLIP1,$/;"	e	enum:__anon2	file:
+STAGE_FLIP16	afl-fuzz.c	/^  \/* 04 *\/ STAGE_FLIP16,$/;"	e	enum:__anon2	file:
+STAGE_FLIP2	afl-fuzz.c	/^  \/* 01 *\/ STAGE_FLIP2,$/;"	e	enum:__anon2	file:
+STAGE_FLIP32	afl-fuzz.c	/^  \/* 05 *\/ STAGE_FLIP32,$/;"	e	enum:__anon2	file:
+STAGE_FLIP4	afl-fuzz.c	/^  \/* 02 *\/ STAGE_FLIP4,$/;"	e	enum:__anon2	file:
+STAGE_FLIP8	afl-fuzz.c	/^  \/* 03 *\/ STAGE_FLIP8,$/;"	e	enum:__anon2	file:
+STAGE_HAVOC	afl-fuzz.c	/^  \/* 15 *\/ STAGE_HAVOC,$/;"	e	enum:__anon2	file:
+STAGE_INTEREST16	afl-fuzz.c	/^  \/* 10 *\/ STAGE_INTEREST16,$/;"	e	enum:__anon2	file:
+STAGE_INTEREST32	afl-fuzz.c	/^  \/* 11 *\/ STAGE_INTEREST32,$/;"	e	enum:__anon2	file:
+STAGE_INTEREST8	afl-fuzz.c	/^  \/* 09 *\/ STAGE_INTEREST8,$/;"	e	enum:__anon2	file:
+STAGE_SPLICE	afl-fuzz.c	/^  \/* 16 *\/ STAGE_SPLICE$/;"	e	enum:__anon2	file:
+STAGE_VAL_BE	afl-fuzz.c	/^  \/* 02 *\/ STAGE_VAL_BE$/;"	e	enum:__anon3	file:
+STAGE_VAL_LE	afl-fuzz.c	/^  \/* 01 *\/ STAGE_VAL_LE,$/;"	e	enum:__anon3	file:
+STAGE_VAL_NONE	afl-fuzz.c	/^  \/* 00 *\/ STAGE_VAL_NONE,$/;"	e	enum:__anon3	file:
 STATS_UPDATE_SEC	config.h	208;"	d
 STRINGIFY	types.h	86;"	d
 STRINGIFY_INTERNAL	types.h	85;"	d
@@ -717,7 +717,7 @@ out_fd	afl-fuzz.c	/^static s32 out_fd,                    \/* Persistent fd for 
 out_file	afl-fuzz.c	/^          *out_file,                  \/* File to fuzz, if any             *\/$/;"	v
 out_file	afl-showmap.c	/^static u8 *out_file,                  \/* Trace output file                 *\/$/;"	v	file:
 out_file	afl-tmin.c	/^          *out_file,                  \/* Minimizer output file             *\/$/;"	v	file:
-override	llvm_mode/afl-llvm-pass.so.cc	/^      bool runOnModule(Module &M) override;$/;"	m	class:__anon4::AFLCoverage	file:
+override	llvm_mode/afl-llvm-pass.so.cc	/^      bool runOnModule(Module &M) override;$/;"	m	class:__anon1::AFLCoverage	file:
 p	docs/vuln_samples/sqlite-null-ptr8.sql	/^CREATE TABLE p(a UNIQUE,PRIMARY KEY('a'))WITHOUT rowid;$/;"	t
 p.a	docs/vuln_samples/sqlite-null-ptr8.sql	/^CREATE TABLE p(a UNIQUE,PRIMARY KEY('a'))WITHOUT rowid;$/;"	F
 pass_thru	afl-as.c	/^            pass_thru,          \/* Just pass data through?              *\/$/;"	v	file:

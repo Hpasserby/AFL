@@ -812,6 +812,9 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
 
   if (q->depth > max_depth) max_depth = q->depth;
 
+  // queue_top保存单链表末尾
+  // queue保存单链表头
+  // q_prev100是类似一个跳跃表，加速迭代
   if (queue_top) {
 
     queue_top->next = q;
@@ -819,6 +822,7 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
 
   } else q_prev100 = queue = queue_top = q;
 
+  // 队列计数
   queued_paths++;
   pending_not_fuzzed++;
 
@@ -1372,15 +1376,19 @@ EXP_ST void setup_shm(void) {
 
   u8* shm_str;
 
+  // 初始化几个bitmap
+  // virgin_bits为1表示trace_bits中对应位在所有执行路径中都为0
   if (!in_bitmap) memset(virgin_bits, 255, MAP_SIZE);
 
   memset(virgin_tmout, 255, MAP_SIZE);
   memset(virgin_crash, 255, MAP_SIZE);
 
+  // 创建共享内存，用于保存trace_bits
   shm_id = shmget(IPC_PRIVATE, MAP_SIZE, IPC_CREAT | IPC_EXCL | 0600);
 
   if (shm_id < 0) PFATAL("shmget() failed");
 
+  // 注册退出时共享内存的的“析构函数”
   atexit(remove_shm);
 
   shm_str = alloc_printf("%d", shm_id);
@@ -1473,7 +1481,7 @@ static void read_testcases(void) {
   }
 
   for (i = 0; i < nl_cnt; i++) {
-
+	
     struct stat st;
 
     u8* fn = alloc_printf("%s/%s", in_dir, nl[i]->d_name);
@@ -1483,6 +1491,7 @@ static void read_testcases(void) {
 
     free(nl[i]); /* not tracked */
  
+	// 检查样例文件是否合法
     if (lstat(fn, &st) || access(fn, R_OK))
       PFATAL("Unable to access '%s'", fn);
 
@@ -1505,9 +1514,11 @@ static void read_testcases(void) {
        fuzzing when resuming aborted scans, because it would be pointless
        and probably very time-consuming. */
 
+	// 若dfn存在，则不需要再进行deterministic fuzz
     if (!access(dfn, F_OK)) passed_det = 1;
     ck_free(dfn);
 
+	// 输入样例添加到队列
     add_to_queue(fn, st.st_size, passed_det);
 
   }
@@ -1810,6 +1821,7 @@ static void maybe_add_auto(u8* mem, u32 len) {
 
   /* Skip runs of identical bytes. */
 
+  // 找到第一个与mem[0]不同的项
   for (i = 1; i < len; i++)
     if (mem[0] ^ mem[i]) break;
 
@@ -1940,6 +1952,7 @@ static void load_auto(void) {
 
   for (i = 0; i < USE_AUTO_EXTRAS; i++) {
 
+	// 遍历打开文件  
     u8  tmp[MAX_AUTO_EXTRA + 1];
     u8* fn = alloc_printf("%s/.state/auto_extras/auto_%06u", in_dir, i);
     s32 fd, len;
@@ -1961,6 +1974,7 @@ static void load_auto(void) {
 
     if (len < 0) PFATAL("Unable to read from '%s'", fn);
 
+	// 通过长度判断是否是合法的
     if (len >= MIN_AUTO_EXTRA && len <= MAX_AUTO_EXTRA)
       maybe_add_auto(tmp, len);
 
@@ -2573,11 +2587,13 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 
   static u8 first_trace[MAP_SIZE];
 
+  // 若q->exec_cksum为0 代表第一次运行该样例
   u8  fault = 0, new_bits = 0, var_detected = 0, hnb = 0,
       first_run = (q->exec_cksum == 0);
 
   u64 start_us, stop_us;
 
+  // 保存原有状态
   s32 old_sc = stage_cur, old_sm = stage_max;
   u32 use_tmout = exec_tmout;
   u8* old_sn = stage_name;
@@ -2586,21 +2602,26 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
      trying to calibrate already-added finds. This helps avoid trouble due
      to intermittent latency. */
 
+  // 若是处于resuming 稍微增加timeout
   if (!from_queue || resuming_fuzz)
     use_tmout = MAX(exec_tmout + CAL_TMOUT_ADD,
                     exec_tmout * CAL_TMOUT_PERC / 100);
 
   q->cal_failed++;
 
+  // 根据环境变量fast calibate决定stage_max的值
+  // 表示该stage的执行次数
   stage_name = "calibration";
   stage_max  = fast_cal ? 3 : CAL_CYCLES;
 
   /* Make sure the forkserver is up before we do anything, and let's not
      count its spin-up time toward binary calibration. */
 
+  // 启动forkserver
   if (dumb_mode != 1 && !no_forkserver && !forksrv_pid)
     init_forkserver(argv);
 
+  // 如果不是第一次运行该样例
   if (q->exec_cksum) {
 
     memcpy(first_trace, trace_bits, MAP_SIZE);
@@ -2746,6 +2767,7 @@ static void perform_dry_run(char** argv) {
   u32 cal_failures = 0;
   u8* skip_crashes = getenv("AFL_SKIP_CRASHES");
 
+  // 遍历输入样例
   while (q) {
 
     u8* use_mem;
@@ -2761,11 +2783,13 @@ static void perform_dry_run(char** argv) {
 
     use_mem = ck_alloc_nozero(q->len);
 
+	// 读取样例
     if (read(fd, use_mem, q->len) != q->len)
       FATAL("Short read from '%s'", q->fname);
 
     close(fd);
 
+	// 校准样例
     res = calibrate_case(argv, q, use_mem, 0, 1);
     ck_free(use_mem);
 
@@ -3047,8 +3071,10 @@ static void pivot_inputs(void) {
 
     /* Pivot to the new queue entry. */
 
+	// 在out_dir/queue中创建输入样例的硬链接，失败则直接复制
     link_or_copy(q->fname, nfn);
     ck_free(q->fname);
+	// 更新队列中的文件路径
     q->fname = nfn;
 
     /* Make sure that the passed_det value carries over, too. */
@@ -7158,6 +7184,7 @@ EXP_ST void setup_dirs_fds(void) {
 
   ACTF("Setting up output directories...");
 
+  // 并行模式，创建对应文件夹
   if (sync_id && mkdir(sync_dir, 0700) && errno != EEXIST)
       PFATAL("Unable to create '%s'", sync_dir);
 
@@ -8050,20 +8077,27 @@ int main(int argc, char** argv) {
   setup_shm();
   init_count_class16();
 
+  // 创建和初始化输出文件夹
   setup_dirs_fds();
+  // 从输入文件夹读取样例，并加入队列
   read_testcases();
+  // 加载extras，暂时看不懂
   load_auto();
 
+  // 将输入样例迁移到输出文件夹中out_dir/queue
   pivot_inputs();
 
+  // 用户提供extras
   if (extras_dir) load_extras(extras_dir);
 
   if (!timeout_given) find_timeout();
 
+  // 处理参数中的@@
   detect_file_args(argv + optind + 1);
 
   if (!out_file) setup_stdio_file();
 
+  // 检查目标程序是否存在，且不为shell脚本
   check_binary(argv[optind]);
 
   start_time = get_cur_time();

@@ -934,6 +934,9 @@ static inline u8 has_new_bits(u8* virgin_map) {
        that have not been already cleared from the virgin map - since this will
        almost always be the case. */
 
+	// 若*current	则说明该路径被访问
+	// 若*virgini = 0xff	则说明该路径此前从未被访问
+	// 以下表示若存在新路径或存在不同的hit数
     if (unlikely(*current) && unlikely(*current & *virgin)) {
 
       if (likely(ret < 2)) {
@@ -946,6 +949,9 @@ static inline u8 has_new_bits(u8* virgin_map) {
 
 #ifdef WORD_SIZE_64
 
+		// 用于定位具体是哪一条路径
+		// ret = 2 表示有新路径
+		// ret = 1 表示只是hit数不同
         if ((cur[0] && vir[0] == 0xff) || (cur[1] && vir[1] == 0xff) ||
             (cur[2] && vir[2] == 0xff) || (cur[3] && vir[3] == 0xff) ||
             (cur[4] && vir[4] == 0xff) || (cur[5] && vir[5] == 0xff) ||
@@ -962,6 +968,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
 
       }
 
+	  // 更新virgin
       *virgin &= ~*current;
 
     }
@@ -2587,7 +2594,7 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 
   static u8 first_trace[MAP_SIZE];
 
-  // 若q->exec_cksum为0 代表第一次运行该样例
+  // 若q->exec_cksum为0 说明第一次运行该样例
   u8  fault = 0, new_bits = 0, var_detected = 0, hnb = 0,
       first_run = (q->exec_cksum == 0);
 
@@ -2617,13 +2624,15 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
   /* Make sure the forkserver is up before we do anything, and let's not
      count its spin-up time toward binary calibration. */
 
-  // 启动forkserver
+  // 确保forkserver启动
   if (dumb_mode != 1 && !no_forkserver && !forksrv_pid)
     init_forkserver(argv);
 
   // 如果不是第一次运行该样例
+  // 那么 q 一定是最近一次执行的样例
   if (q->exec_cksum) {
 
+	// 所以可以直接使用trace_bits
     memcpy(first_trace, trace_bits, MAP_SIZE);
     hnb = has_new_bits(virgin_bits);
     if (hnb > new_bits) new_bits = hnb;

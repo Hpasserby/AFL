@@ -134,14 +134,18 @@ static void edit_params(int argc, char** argv) {
   if (!tmp_dir) tmp_dir = getenv("TMP");
   if (!tmp_dir) tmp_dir = "/tmp";
 
+  // 申请空间存放as的参数
   as_params = ck_alloc((argc + 32) * sizeof(u8*));
 
+  // 第一个参数 as
   as_params[0] = afl_as ? afl_as : (u8*)"as";
 
+  // 最后一个参数置为NULL
   as_params[argc] = 0;
 
   for (i = 1; i < argc - 1; i++) {
 
+	// 判断64或32位
     if (!strcmp(argv[i], "--64")) use_64bit = 1;
     else if (!strcmp(argv[i], "--32")) use_64bit = 0;
 
@@ -165,6 +169,7 @@ static void edit_params(int argc, char** argv) {
 
 #endif /* __APPLE__ */
 
+	// 把原参数直接复制过来
     as_params[as_par_cnt++] = argv[i];
 
   }
@@ -184,10 +189,12 @@ static void edit_params(int argc, char** argv) {
 
 #endif /* __APPLE__ */
 
+  // 获取文件名
   input_file = argv[argc - 1];
 
   if (input_file[0] == '-') {
 
+	// 只是获取版本信息的命令
     if (!strcmp(input_file + 1, "-version")) {
       just_version = 1;
       modified_file = input_file;
@@ -210,11 +217,13 @@ static void edit_params(int argc, char** argv) {
 
   }
 
+  // 大概是tmp_dir/.afl-pid-time.s
   modified_file = alloc_printf("%s/.afl-%u-%u.s", tmp_dir, getpid(),
                                (u32)time(NULL));
 
 wrap_things_up:
 
+  // 把.s文件设为最后一个参数
   as_params[as_par_cnt++] = modified_file;
   as_params[as_par_cnt]   = NULL;
 
@@ -242,6 +251,7 @@ static void add_instrumentation(void) {
 
 #endif /* __APPLE__ */
 
+  // 读取输入的.s文件
   if (input_file) {
 
     inf = fopen(input_file, "r");
@@ -249,14 +259,17 @@ static void add_instrumentation(void) {
 
   } else inf = stdin;
 
+  // 打开用于输出的.s文件
   outfd = open(modified_file, O_WRONLY | O_EXCL | O_CREAT, 0600);
 
   if (outfd < 0) PFATAL("Unable to write to '%s'", modified_file);
 
+  // 将文件描述符转换为文件指针
   outf = fdopen(outfd, "w");
 
   if (!outf) PFATAL("fdopen() failed");  
 
+  // 逐行读取文件
   while (fgets(line, MAX_LINE, inf)) {
 
     /* In some cases, we want to defer writing the instrumentation trampoline
@@ -264,9 +277,11 @@ static void add_instrumentation(void) {
        mode, and if the line starts with a tab followed by a character, dump
        the trampoline now. */
 
+	// 若上一条语句符合插桩条件，则插入插桩代码
     if (!pass_thru && !skip_intel && !skip_app && !skip_csect && instr_ok &&
         instrument_next && line[0] == '\t' && isalpha(line[1])) {
 
+	  // 生成随机数构造trampoline 并写入outf
       fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
               R(MAP_SIZE));
 
@@ -276,7 +291,7 @@ static void add_instrumentation(void) {
     }
 
     /* Output the actual line, call it a day in pass-thru mode. */
-
+	// 直接拷贝该行到outf
     fputs(line, outf);
 
     if (pass_thru) continue;
@@ -285,6 +300,7 @@ static void add_instrumentation(void) {
        instrument the .text section. So, let's keep track of that in processed
        files - and let's set instr_ok accordingly. */
 
+	// 查找代码段起始.text 并标记instr_ok
     if (line[0] == '\t' && line[1] == '.') {
 
       /* OpenBSD puts jump tables directly inline with the code, which is
@@ -312,6 +328,7 @@ static void add_instrumentation(void) {
 
     }
 
+	// 判断一些特殊的不用插桩代码块
     /* Detect off-flavor assembly (rare, happens in gdb). When this is
        encountered, we set skip_csect until the opposite directive is
        seen, and we do not instrument. */
@@ -362,6 +379,7 @@ static void add_instrumentation(void) {
 
      */
 
+	// 以下情况说明这部分代码块不用插桩 直接跳过
     if (skip_intel || skip_app || skip_csect || !instr_ok ||
         line[0] == '#' || line[0] == ' ') continue;
 
@@ -369,10 +387,13 @@ static void add_instrumentation(void) {
        right after the branch (to instrument the not-taken path) and at the
        branch destination label (handled later on). */
 
+	// 如果是条件跳转指令
     if (line[0] == '\t') {
 
+	  // inst_ratio默认100 表示插桩密度
       if (line[1] == 'j' && line[2] != 'm' && R(100) < inst_ratio) {
 
+		// 进行插桩
         fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
                 R(MAP_SIZE));
 
@@ -400,8 +421,10 @@ static void add_instrumentation(void) {
 
     /* Everybody else: .L<whatever>: */
 
+	// 若该行是否是一个label
     if (strstr(line, ":")) {
 
+	  // 以 . 开始说明可能是跳转目标
       if (line[0] == '.') {
 
 #endif /* __APPLE__ */
@@ -435,10 +458,12 @@ static void add_instrumentation(void) {
              .Lfunc_begin0-style exception handling calculations (a problem on
              MacOS X). */
 
+		  // 标记下一行插桩
           if (!skip_next_label) instrument_next = 1; else skip_next_label = 0;
 
         }
 
+	  // 不以 . 开始则说明是一个函数
       } else {
 
         /* Function label (always instrumented, deferred mode). */
@@ -513,6 +538,7 @@ int main(int argc, char** argv) {
 
   srandom(rand_seed);
 
+  // 编辑一些参数，创建modified_file用于存放插桩后的代码
   edit_params(argc, argv);
 
   if (inst_ratio_str) {
@@ -536,6 +562,7 @@ int main(int argc, char** argv) {
     inst_ratio /= 3;
   }
 
+  // 对文件进行插桩，修改后的文件放在modified_file
   if (!just_version) add_instrumentation();
 
   if (!(pid = fork())) {

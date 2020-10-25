@@ -744,6 +744,8 @@ static void mark_as_det_done(struct queue_entry* q) {
 /* Mark as variable. Create symlinks if possible to make it easier to examine
    the files. */
 
+// 创建符号链接到outdir/queue/.state/variable_behavior/
+// 标记var_behavior
 static void mark_as_variable(struct queue_entry* q) {
 
   u8 *fn = strrchr(q->fname, '/') + 1, *ldest;
@@ -1017,6 +1019,9 @@ static u32 count_bits(u8* mem) {
 }
 
 
+// FF(0) == 0xff
+// FF(1) == 0xff00
+// FF(2) == 0xff0000
 #define FF(_b)  (0xff << ((_b) << 3))
 
 /* Count the number of bytes set in the bitmap. Called fairly sporadically,
@@ -1249,6 +1254,8 @@ static void remove_shm(void) {
    count information here. This is called only sporadically, for some
    new paths. */
 
+// 大概是将dst的8个字节压缩到src的一个字节
+// 去掉了trace_bits中的覆盖次数，只保留是否覆盖的信息
 static void minimize_bits(u8* dst, u8* src) {
 
   u32 i = 0;
@@ -1273,9 +1280,12 @@ static void minimize_bits(u8* dst, u8* src) {
    for every byte in the bitmap. We win that slot if there is no previous
    contender, or if the contender has a more favorable speed x size factor. */
 
+// 大概就是维护一个top_rated[]
+// top_rated[edge] 表示 能覆盖"edge"的最优的case
 static void update_bitmap_score(struct queue_entry* q) {
 
   u32 i;
+  // 执行时间和输入大小作为因子
   u64 fav_factor = q->exec_us * q->len;
 
   /* For every byte set in trace_bits[], see if there is a previous winner,
@@ -1285,16 +1295,20 @@ static void update_bitmap_score(struct queue_entry* q) {
 
     if (trace_bits[i]) {
 
+	   // 若已经存在一个top_rated 则进行比较
        if (top_rated[i]) {
 
          /* Faster-executing or smaller test cases are favored. */
 
+		 // 要更快更小的2333
          if (fav_factor > top_rated[i]->exec_us * top_rated[i]->len) continue;
 
          /* Looks like we're going to win. Decrease ref count for the
             previous winner, discard its trace_bits[] if necessary. */
 
+		 // 减少该路径对应case的引用计数
          if (!--top_rated[i]->tc_ref) {
+		   // 若已经没有路径需要由该case覆盖了
            ck_free(top_rated[i]->trace_mini);
            top_rated[i]->trace_mini = 0;
          }
@@ -1303,9 +1317,11 @@ static void update_bitmap_score(struct queue_entry* q) {
 
        /* Insert ourselves as the new winner. */
 
+	   // 将新的case设置为对应的“边”的top_rated
        top_rated[i] = q;
        q->tc_ref++;
 
+	   // 将trace_bits压缩保存
        if (!q->trace_mini) {
          q->trace_mini = ck_alloc(MAP_SIZE >> 3);
          minimize_bits(q->trace_mini, trace_bits);
@@ -1324,12 +1340,15 @@ static void update_bitmap_score(struct queue_entry* q) {
    until the next run. The favored entries are given more air time during
    all fuzzing steps. */
 
+// 用于精简队列 去除一些冗余case
+// 不是最优算法 只是贪心的找到一组能够覆盖所有edge的cases
 static void cull_queue(void) {
 
   struct queue_entry* q;
   static u8 temp_v[MAP_SIZE >> 3];
   u32 i;
 
+  // dumb模式 或 score未改变 则直接返回
   if (dumb_mode || !score_changed) return;
 
   score_changed = 0;
@@ -1341,6 +1360,7 @@ static void cull_queue(void) {
 
   q = queue;
 
+  // 去除所有标记
   while (q) {
     q->favored = 0;
     q = q->next;
@@ -1349,26 +1369,32 @@ static void cull_queue(void) {
   /* Let's see if anything in the bitmap isn't captured in temp_v.
      If yes, and if it has a top_rated[] contender, let's use it. */
 
+  // 遍历每一条edge
   for (i = 0; i < MAP_SIZE; i++)
+	// 若某一条edge存在top_rated
+	// 且temp_v中该edge还未被清除
     if (top_rated[i] && (temp_v[i >> 3] & (1 << (i & 7)))) {
 
       u32 j = MAP_SIZE >> 3;
 
       /* Remove all bits belonging to the current entry from temp_v. */
-
+	  // 将该top_rated对应case所覆盖的所有路径从top_rated中清除
       while (j--) 
         if (top_rated[i]->trace_mini[j])
           temp_v[j] &= ~top_rated[i]->trace_mini[j];
 
+	  // 标记该case为favored
       top_rated[i]->favored = 1;
       queued_favored++;
 
+	  // 若该case没有被fuzz 则标记为pending
       if (!top_rated[i]->was_fuzzed) pending_favored++;
 
     }
 
   q = queue;
 
+  // 剩余的就被标记为冗余
   while (q) {
     mark_as_redundant(q, !q->favored);
     q = q->next;
@@ -1824,11 +1850,12 @@ static void maybe_add_auto(u8* mem, u32 len) {
 
   /* Allow users to specify that they don't want auto dictionaries. */
 
+  // 若配置不需要auto dictionaries
   if (!MAX_AUTO_EXTRAS || !USE_AUTO_EXTRAS) return;
 
   /* Skip runs of identical bytes. */
 
-  // 找到第一个与mem[0]不同的项
+  // 找到第一个与mem[0]不同的字节
   for (i = 1; i < len; i++)
     if (mem[0] ^ mem[i]) break;
 
@@ -1836,6 +1863,10 @@ static void maybe_add_auto(u8* mem, u32 len) {
 
   /* Reject builtin interesting values. */
 
+  // 排除一些例外情况
+  // 预置了一系列interesting的值
+  // 我理解这些值可能造成溢出崩溃之类的情况
+  // 这些值将不作为token
   if (len == 2) {
 
     i = sizeof(interesting_16) >> 1;
@@ -1860,21 +1891,27 @@ static void maybe_add_auto(u8* mem, u32 len) {
      match. We optimize by exploiting the fact that extras[] are sorted
      by size. */
 
+  // extras[]是按照len从小到大排序的 是用户事先指定的
+  // 首先定位到与当前token长度相同的位置
   for (i = 0; i < extras_cnt; i++)
     if (extras[i].len >= len) break;
 
+  // 然后比较extras中是否存在相同的
   for (; i < extras_cnt && extras[i].len == len; i++)
     if (!memcmp_nocase(extras[i].data, mem, len)) return;
 
   /* Last but not least, check a_extras[] for matches. There are no
      guarantees of a particular sort order. */
 
+  // 标记a_extras被改变
   auto_changed = 1;
 
   for (i = 0; i < a_extras_cnt; i++) {
 
+	// 若在a_extras中存在相同的
     if (a_extras[i].len == len && !memcmp_nocase(a_extras[i].data, mem, len)) {
 
+	  // 计数加一
       a_extras[i].hit_cnt++;
       goto sort_a_extras;
 
@@ -1886,7 +1923,9 @@ static void maybe_add_auto(u8* mem, u32 len) {
      append it if we have room. Otherwise, let's randomly evict some other
      entry from the bottom half of the list. */
 
+  // 若这是一个全新的token
   if (a_extras_cnt < MAX_AUTO_EXTRAS) {
+	// 数量没有超过阈值 则直接添加
 
     a_extras = ck_realloc_block(a_extras, (a_extras_cnt + 1) *
                                 sizeof(struct extra_data));
@@ -1896,6 +1935,8 @@ static void maybe_add_auto(u8* mem, u32 len) {
     a_extras_cnt++;
 
   } else {
+	// 数量超过阈值
+	// 则从a_extras的后半部分随机选一个替换
 
     i = MAX_AUTO_EXTRAS / 2 +
         UR((MAX_AUTO_EXTRAS + 1) / 2);
@@ -1909,6 +1950,9 @@ static void maybe_add_auto(u8* mem, u32 len) {
   }
 
 sort_a_extras:
+  // 对a_extras进行排序
+  // 先按照hit_cnt降序排
+  // 然后对top50按照size升序排
 
   /* First, sort all auto extras by use count, descending order. */
 
@@ -1929,6 +1973,7 @@ static void save_auto(void) {
 
   u32 i;
 
+  // 若设置了auto_changed
   if (!auto_changed) return;
   auto_changed = 0;
 
@@ -2045,6 +2090,7 @@ EXP_ST void init_forkserver(char** argv) {
     /* Umpf. On OpenBSD, the default fd limit for root users is set to
        soft 128. Let's try to fix that... */
 
+	// 设置打开的最大文件描述符
     if (!getrlimit(RLIMIT_NOFILE, &r) && r.rlim_cur < FORKSRV_FD + 2) {
 
       r.rlim_cur = FORKSRV_FD + 2;
@@ -2052,6 +2098,7 @@ EXP_ST void init_forkserver(char** argv) {
 
     }
 
+	// 设置内存空间大小
     if (mem_limit) {
 
       r.rlim_max = r.rlim_cur = ((rlim_t)mem_limit) << 20;
@@ -2083,24 +2130,29 @@ EXP_ST void init_forkserver(char** argv) {
     /* Isolate the process and configure standard descriptors. If out_file is
        specified, stdin is /dev/null; otherwise, out_fd is cloned instead. */
 
+	// 隔离父子进程
     setsid();
 
+	// 标准输出重定向到/dev/null
     dup2(dev_null_fd, 1);
     dup2(dev_null_fd, 2);
 
+	// 如果设置了out_file 则不需要标准输入了
     if (out_file) {
 
       dup2(dev_null_fd, 0);
 
     } else {
 
+	  // 否则将out_fd作为标准输入
       dup2(out_fd, 0);
       close(out_fd);
 
     }
 
     /* Set up control and status pipes, close the unneeded original fds. */
-
+	// 将控制pipe的读取端赋给FORKSRV_FD，只能读取控制命令
+	// 将状态pipe的写入端赋给FORKSRV_FD+1，只能发送状态信息
     if (dup2(ctl_pipe[0], FORKSRV_FD) < 0) PFATAL("dup2() failed");
     if (dup2(st_pipe[1], FORKSRV_FD + 1) < 0) PFATAL("dup2() failed");
 
@@ -2135,6 +2187,9 @@ EXP_ST void init_forkserver(char** argv) {
                            "allocator_may_return_null=1:"
                            "msan_track_origins=0", 0);
 
+	// 执行目标进程
+	// 第一次执行的目标进程会进入_afl_maybe_log并陷入__afl_fork_wait_loop
+	// 此后的target都会从这个进程直接fork
     execv(target_path, argv);
 
     /* Use a distinctive bitmap signature to tell the parent about execv()
@@ -2150,11 +2205,14 @@ EXP_ST void init_forkserver(char** argv) {
   close(ctl_pipe[0]);
   close(st_pipe[1]);
 
+  // 保存控制pipe的输入端
+  // 保存状态pipe的输出端
   fsrv_ctl_fd = ctl_pipe[1];
   fsrv_st_fd  = st_pipe[0];
 
   /* Wait for the fork server to come up, but don't wait too long. */
 
+  // 设置等待fork server的时间
   it.it_value.tv_sec = ((exec_tmout * FORK_WAIT_MULT) / 1000);
   it.it_value.tv_usec = ((exec_tmout * FORK_WAIT_MULT) % 1000) * 1000;
 
@@ -2170,11 +2228,13 @@ EXP_ST void init_forkserver(char** argv) {
   /* If we have a four-byte "hello" message from the server, we're all set.
      Otherwise, try to figure out what went wrong. */
 
+  // 判断是否接收到server的hello消息
   if (rlen == 4) {
     OKF("All right - fork server is up.");
     return;
   }
 
+  // 下面是一大堆错误处理代码
   if (child_timed_out)
     FATAL("Timeout while initializing fork server (adjusting -t may help)");
 
@@ -2323,6 +2383,7 @@ static u8 run_target(char** argv, u32 timeout) {
      must prevent any earlier operations from venturing into that
      territory. */
 
+  // 初始化trace_bits
   memset(trace_bits, 0, MAP_SIZE);
   MEM_BARRIER();
 
@@ -2331,6 +2392,8 @@ static u8 run_target(char** argv, u32 timeout) {
      execve(). There is a bit of code duplication between here and 
      init_forkserver(), but c'est la vie. */
 
+  // 若是dumb_mode或无forkserver
+  // 每次都需要执行execv
   if (dumb_mode == 1 || no_forkserver) {
 
     child_pid = fork();
@@ -2415,6 +2478,7 @@ static u8 run_target(char** argv, u32 timeout) {
     /* In non-dumb mode, we have the fork server up and running, so simply
        tell it to have at it, and then read back PID. */
 
+	// 向fork server发送控制信息
     if ((res = write(fsrv_ctl_fd, &prev_timed_out, 4)) != 4) {
 
       if (stop_soon) return 0;
@@ -2422,6 +2486,7 @@ static u8 run_target(char** argv, u32 timeout) {
 
     }
 
+	// 读取fork server返回的pid
     if ((res = read(fsrv_st_fd, &child_pid, 4)) != 4) {
 
       if (stop_soon) return 0;
@@ -2435,6 +2500,7 @@ static u8 run_target(char** argv, u32 timeout) {
 
   /* Configure timeout, as requested by user, then wait for child to terminate. */
 
+  // 设置等待超时时间
   it.it_value.tv_sec = (timeout / 1000);
   it.it_value.tv_usec = (timeout % 1000) * 1000;
 
@@ -2450,6 +2516,7 @@ static u8 run_target(char** argv, u32 timeout) {
 
     s32 res;
 
+	// 等待执行结束
     if ((res = read(fsrv_st_fd, &status, 4)) != 4) {
 
       if (stop_soon) return 0;
@@ -2459,8 +2526,10 @@ static u8 run_target(char** argv, u32 timeout) {
 
   }
 
+  // WIFSTOPPED非0表示进程处于暂停状态
   if (!WIFSTOPPED(status)) child_pid = 0;
 
+  // 计算执行时间
   getitimer(ITIMER_REAL, &it);
   exec_ms = (u64) timeout - (it.it_value.tv_sec * 1000 +
                              it.it_value.tv_usec / 1000);
@@ -2470,6 +2539,7 @@ static u8 run_target(char** argv, u32 timeout) {
 
   setitimer(ITIMER_REAL, &it, NULL);
 
+  // 增加执行计数
   total_execs++;
 
   /* Any subsequent operations on trace_bits must not be moved by the
@@ -2478,22 +2548,28 @@ static u8 run_target(char** argv, u32 timeout) {
 
   MEM_BARRIER();
 
+  // 获取trace_bits
   tb4 = *(u32*)trace_bits;
 
+  // 通过count_class_lookup16来将执行次数归为几类
 #ifdef WORD_SIZE_64
   classify_counts((u64*)trace_bits);
 #else
   classify_counts((u32*)trace_bits);
 #endif /* ^WORD_SIZE_64 */
 
+  // 记录该次是否超时
   prev_timed_out = child_timed_out;
 
   /* Report outcome to caller. */
 
+  // WIFSIGNALED非0表示进程异常终止
   if (WIFSIGNALED(status) && !stop_soon) {
 
+	// 获取子进程异常终止的信号
     kill_signal = WTERMSIG(status);
 
+	// 如果不是SIGKILL 则说明进程crash
     if (child_timed_out && kill_signal == SIGKILL) return FAULT_TMOUT;
 
     return FAULT_CRASH;
@@ -2503,6 +2579,7 @@ static u8 run_target(char** argv, u32 timeout) {
   /* A somewhat nasty hack for MSAN, which doesn't support abort_on_error and
      must use a special exit code. */
 
+  // 其他一些崩溃信号
   if (uses_asan && WEXITSTATUS(status) == MSAN_ERROR) {
     kill_signal = 0;
     return FAULT_CRASH;
@@ -2540,10 +2617,17 @@ static void write_to_testcase(void* mem, u32 len) {
 
   } else lseek(fd, 0, SEEK_SET);
 
+  // fd为用于读取输入数据的文件描述符
+  // mem为输入样例
+  // len为输入样例长度
+  // out_file为用于读取输入数据的文件名(outdir/.cur_input)
+  // 将输入样例复制到out_file中
   ck_write(fd, mem, len, out_file);
 
   if (!out_file) {
 
+	// 如果是默认out_file，则截断len之后的所有数据
+	// 因为文件会被重复使用
     if (ftruncate(fd, len)) PFATAL("ftruncate() failed");
     lseek(fd, 0, SEEK_SET);
 
@@ -2569,8 +2653,10 @@ static void write_with_gap(void* mem, u32 len, u32 skip_at, u32 skip_len) {
 
   } else lseek(fd, 0, SEEK_SET);
 
+  // 写入前skip_at字节的内容
   if (skip_at) ck_write(fd, mem, skip_at, out_file);
 
+  // 跳过skip_len 将剩余的内容写入
   if (tail_len) ck_write(fd, mem + skip_at + skip_len, tail_len, out_file);
 
   if (!out_file) {
@@ -2634,6 +2720,7 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 
 	// 所以可以直接使用trace_bits
     memcpy(first_trace, trace_bits, MAP_SIZE);
+	// 判断是否存在新路径
     hnb = has_new_bits(virgin_bits);
     if (hnb > new_bits) new_bits = hnb;
 
@@ -2641,41 +2728,54 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 
   start_us = get_cur_time_us();
 
+  // 开始当前stage循环
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
 
     u32 cksum;
 
+	// 若不是第一次运行，更新前端状态
     if (!first_run && !(stage_cur % stats_update_freq)) show_stats();
 
+	// 将输入样例复制到out_file，也就是用于读取输入的文件
     write_to_testcase(use_mem, q->len);
 
+	// 执行程序，返回进程执行结果状态
     fault = run_target(argv, use_tmout);
 
     /* stop_soon is set by the handler for Ctrl+C. When it's pressed,
        we want to bail out quickly. */
 
+	// 若ctrl-c 且 结果不符合crash_mode（默认为FAULT_NONE）
     if (stop_soon || fault != crash_mode) goto abort_calibration;
 
+	// 第一轮执行 且 无覆盖路径 则 abort
     if (!dumb_mode && !stage_cur && !count_bytes(trace_bits)) {
       fault = FAULT_NOINST;
       goto abort_calibration;
     }
 
+	// 计算trace_bits的checksum
     cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 
+	// 若与上一轮的checksum不同
     if (q->exec_cksum != cksum) {
 
+	  // 判断是否有新路径
       hnb = has_new_bits(virgin_bits);
       if (hnb > new_bits) new_bits = hnb;
 
+	  // 若不是第一次运行
       if (q->exec_cksum) {
 
         u32 i;
 
         for (i = 0; i < MAP_SIZE; i++) {
 
+		  // 该字节未被标记为variable 但该字节与上次执行结果不同
           if (!var_bytes[i] && first_trace[i] != trace_bits[i]) {
 
+			// 标记该字节
+			// 并提高循环次数
             var_bytes[i] = 1;
             stage_max    = CAL_CYCLES_LONG;
 
@@ -2683,10 +2783,12 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 
         }
 
+		// 标记存在可变字节
         var_detected = 1;
 
       } else {
 
+		// 若第一次运行 保存checksum
         q->exec_cksum = cksum;
         memcpy(first_trace, trace_bits, MAP_SIZE);
 
@@ -2696,6 +2798,7 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 
   }
 
+  // 统计时间和轮数
   stop_us = get_cur_time_us();
 
   total_cal_us     += stop_us - start_us;
@@ -2704,6 +2807,7 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
   /* OK, let's collect some stats about the performance of this test case.
      This is used for fuzzing air time calculations in calculate_score(). */
 
+  // 保存一些数据
   q->exec_us     = (stop_us - start_us) / stage_max;
   q->bitmap_size = count_bytes(trace_bits);
   q->handicap    = handicap;
@@ -2712,27 +2816,34 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
   total_bitmap_size += q->bitmap_size;
   total_bitmap_entries++;
 
+  // 更新score
   update_bitmap_score(q);
 
   /* If this case didn't result in new output from the instrumentation, tell
      parent. This is a non-critical problem, but something to warn the user
      about. */
 
+  // 若这个case没有跑出新东西
   if (!dumb_mode && first_run && !fault && !new_bits) fault = FAULT_NOBITS;
 
 abort_calibration:
 
+  // 若出现过新路径
   if (new_bits == 2 && !q->has_new_cov) {
+	// 标记一下该case
     q->has_new_cov = 1;
     queued_with_cov++;
   }
 
   /* Mark variable paths. */
 
+  // 若存在可变的字节（有些路径时有时无）
   if (var_detected) {
 
     var_byte_count = count_bytes(var_bytes);
 
+	// 若之前没有标记过这个case
+	// 标记为variable
     if (!q->var_behavior) {
       mark_as_variable(q);
       queued_variable++;
@@ -2740,6 +2851,7 @@ abort_calibration:
 
   }
 
+  // 恢复stage状态
   stage_name = old_sn;
   stage_cur  = old_sc;
   stage_max  = old_sm;
@@ -2762,6 +2874,9 @@ static void check_map_coverage(void) {
   for (i = (1 << (MAP_SIZE_POW2 - 1)); i < MAP_SIZE; i++)
     if (trace_bits[i]) return;
 
+  // 若路径数超过100 但trace_bit后半部分没有值
+  // 我猜测这可能是检测是否均匀？
+  // 打印警报信息
   WARNF("Recompile binary with newer version of afl to improve coverage!");
 
 }
@@ -2798,7 +2913,7 @@ static void perform_dry_run(char** argv) {
 
     close(fd);
 
-	// 校准样例
+	// 校准样例 将case先跑一遍
     res = calibrate_case(argv, q, use_mem, 0, 1);
     ck_free(use_mem);
 
@@ -2808,10 +2923,12 @@ static void perform_dry_run(char** argv) {
       SAYF(cGRA "    len = %u, map size = %u, exec speed = %llu us\n" cRST, 
            q->len, q->bitmap_size, q->exec_us);
 
+	// 处理运行结果
     switch (res) {
 
       case FAULT_NONE:
 
+		// 仅检测一次 对trace_bits进行简单的检测
         if (q == queue) check_map_coverage();
 
         if (crash_mode) FATAL("Test case '%s' does *NOT* crash", fn);
@@ -2949,14 +3066,18 @@ static void perform_dry_run(char** argv) {
 
     }
 
+	// 多次运行却得到了不同的覆盖率信息，发出警告信息
     if (q->var_behavior) WARNF("Instrumentation output varies across runs.");
 
     q = q->next;
 
   }
 
+  // 若出现超时、崩溃情况
+  // 一些警报操作
   if (cal_failures) {
 
+	// 失败次数等于所有case数
     if (cal_failures == queued_paths)
       FATAL("All test cases time out%s, giving up!",
             skip_crashes ? " or crash" : "");
@@ -3202,18 +3323,22 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
   s32 fd;
   u8  keeping = 0, res;
 
+  // crash_mode 默认为 FAULT_NONE
   if (fault == crash_mode) {
 
     /* Keep only if there are new bits in the map, add to queue for
        future fuzzing, etc. */
 
+	// 若没有新东西 就直接返回
     if (!(hnb = has_new_bits(virgin_bits))) {
       if (crash_mode) total_crashes++;
       return 0;
     }    
 
+	// 若有新东西 就添加到队列
 #ifndef SIMPLE_FILES
 
+	// 新建case文件路径
     fn = alloc_printf("%s/queue/id:%06u,%s", out_dir, queued_paths,
                       describe_op(hnb));
 
@@ -3223,32 +3348,40 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 #endif /* ^!SIMPLE_FILES */
 
+	// 添加到队列中
     add_to_queue(fn, len, 0);
 
+	// 若存在新路径
     if (hnb == 2) {
+	  // queue_top也就是刚加入的case
       queue_top->has_new_cov = 1;
       queued_with_cov++;
     }
 
+	// 计算case的checksum
     queue_top->exec_cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 
     /* Try to calibrate inline; this also calls update_bitmap_score() when
        successful. */
 
+	// 评估这个case
     res = calibrate_case(argv, queue_top, mem, queue_cycle - 1, 0);
 
     if (res == FAULT_ERROR)
       FATAL("Unable to execute target application");
 
+	// 将case内容保存到文件中
     fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
     if (fd < 0) PFATAL("Unable to create '%s'", fn);
     ck_write(fd, mem, len, fn);
     close(fd);
 
+	// 设置返回值 表示保存这个case
     keeping = 1;
 
   }
 
+  // 对各种执行结果的处理
   switch (fault) {
 
     case FAULT_TMOUT:
@@ -3260,8 +3393,10 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
       total_tmouts++;
 
+	  // 保存超时case的上限
       if (unique_hangs >= KEEP_UNIQUE_HANG) return keeping;
 
+	  // 不是dumb 且没有发现新东西 不保存
       if (!dumb_mode) {
 
 #ifdef WORD_SIZE_64
@@ -3280,6 +3415,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
          the target with a more generous timeout (unless the default timeout
          is already generous). */
 
+	  // 若hang_tmout更宽松，那就再跑一次看看
       if (exec_tmout < hang_tmout) {
 
         u8 new_fault;
@@ -3290,12 +3426,16 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
            timeout actually uncovers a crash. Make sure we don't discard it if
            so. */
 
+		// 如果崩了 就跳转到FAULT_CRASH的处理流程
         if (!stop_soon && new_fault == FAULT_CRASH) goto keep_as_crash;
 
+		// 如果这次没超时了 就直接退出
+		// 话说为啥不再看看有没新bits
         if (stop_soon || new_fault != FAULT_TMOUT) return keeping;
 
       }
 
+	  // 设置hang case的保存路径
 #ifndef SIMPLE_FILES
 
       fn = alloc_printf("%s/hangs/id:%06llu,%s", out_dir,
@@ -3308,12 +3448,14 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 #endif /* ^!SIMPLE_FILES */
 
+	  // 增加 hang case的计数 
       unique_hangs++;
 
       last_hang_time = get_cur_time();
 
       break;
 
+	// 崩溃
     case FAULT_CRASH:
 
 keep_as_crash:
@@ -3322,10 +3464,13 @@ keep_as_crash:
          except for slightly different limits and no need to re-run test
          cases. */
 
+	  // 增加崩溃计数
       total_crashes++;
 
+	  // unique crash上限
       if (unique_crashes >= KEEP_UNIQUE_CRASH) return keeping;
 
+	  // 非dumb mode就必须要有新bits才继续
       if (!dumb_mode) {
 
 #ifdef WORD_SIZE_64
@@ -3338,8 +3483,10 @@ keep_as_crash:
 
       }
 
+	  // 如果是第一次 生成一个README
       if (!unique_crashes) write_crash_readme();
 
+	  // 设置crash cash的保存路径
 #ifndef SIMPLE_FILES
 
       fn = alloc_printf("%s/crashes/id:%06llu,sig:%02u,%s", out_dir,
@@ -3352,6 +3499,7 @@ keep_as_crash:
 
 #endif /* ^!SIMPLE_FILES */
 
+	  // 增加计数
       unique_crashes++;
 
       last_crash_time = get_cur_time();
@@ -3361,6 +3509,7 @@ keep_as_crash:
 
     case FAULT_ERROR: FATAL("Unable to execute target application");
 
+	// 其他情况直接返回
     default: return keeping;
 
   }
@@ -3368,6 +3517,7 @@ keep_as_crash:
   /* If we're here, we apparently want to save the crash or hang
      test case, too. */
 
+  // 保存hang或crash case
   fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
   if (fd < 0) PFATAL("Unable to create '%s'", fn);
   ck_write(fd, mem, len, fn);
@@ -3391,8 +3541,10 @@ static u32 find_start_position(void) {
   s32 fd, i;
   u32 ret;
 
+  // 若不是resuming 则返回
   if (!resuming_fuzz) return 0;
 
+  // 打开fuzzer_stats
   if (in_place_resume) fn = alloc_printf("%s/fuzzer_stats", out_dir);
   else fn = alloc_printf("%s/../fuzzer_stats", in_dir);
 
@@ -3401,9 +3553,11 @@ static u32 find_start_position(void) {
 
   if (fd < 0) return 0;
 
+  // 读取内容
   i = read(fd, tmp, sizeof(tmp) - 1); (void)i; /* Ignore errors */
   close(fd);
 
+  // 找到cur_path的值
   off = strstr(tmp, "cur_path          : ");
   if (!off) return 0;
 
@@ -3485,29 +3639,29 @@ static void write_stats_file(double bitmap_cvg, double stability, double eps) {
     last_eps  = eps;
   }
 
-  fprintf(f, "start_time        : %llu\n"
-             "last_update       : %llu\n"
-             "fuzzer_pid        : %u\n"
-             "cycles_done       : %llu\n"
-             "execs_done        : %llu\n"
-             "execs_per_sec     : %0.02f\n"
-             "paths_total       : %u\n"
-             "paths_favored     : %u\n"
-             "paths_found       : %u\n"
-             "paths_imported    : %u\n"
-             "max_depth         : %u\n"
+  fprintf(f, "start_time        : %llu\n"		// fuzz运行的开始时间
+             "last_update       : %llu\n"		// 当前时间
+             "fuzzer_pid        : %u\n"			// 获取当前的pid
+             "cycles_done       : %llu\n"		// queue执行的轮数
+             "execs_done        : %llu\n"		//
+             "execs_per_sec     : %0.02f\n"		// 每秒执行的次数
+             "paths_total       : %u\n"			// queue中的case数
+             "paths_favored     : %u\n"			// 有价值的case数
+             "paths_found       : %u\n"			// 
+             "paths_imported    : %u\n"			//
+             "max_depth         : %u\n"			// 最大路径深度
              "cur_path          : %u\n" /* Must match find_start_position() */
-             "pending_favs      : %u\n"
-             "pending_total     : %u\n"
-             "variable_paths    : %u\n"
-             "stability         : %0.02f%%\n"
-             "bitmap_cvg        : %0.02f%%\n"
-             "unique_crashes    : %llu\n"
-             "unique_hangs      : %llu\n"
-             "last_path         : %llu\n"
-             "last_crash        : %llu\n"
-             "last_hang         : %llu\n"
-             "execs_since_crash : %llu\n"
+             "pending_favs      : %u\n"			// 等待fuzz的favored paths数
+             "pending_total     : %u\n"			// queue中等待的总数
+             "variable_paths    : %u\n"			// 执行结果可变的case数
+             "stability         : %0.02f%%\n"	// 
+             "bitmap_cvg        : %0.02f%%\n"	// 覆盖率?
+             "unique_crashes    : %llu\n"		// 崩溃
+             "unique_hangs      : %llu\n"		// 挂起
+             "last_path         : %llu\n"		// queue新加一个case 设置该值
+             "last_crash        : %llu\n"		// 新出现一次crash 设置该值
+             "last_hang         : %llu\n"		// 新出现一次hang 设置该值
+             "execs_since_crash : %llu\n"		// 上一吃crash后的执行次数
              "exec_timeout      : %u\n" /* Must match find_timeout() */
              "afl_banner        : %s\n"
              "afl_version       : " VERSION "\n"
@@ -4448,14 +4602,18 @@ static void show_init_stats(void) {
 
   if (total_cal_cycles) avg_us = total_cal_us / total_cal_cycles;
 
+  // 统计一些case数据
   while (q) {
 
+	// 最短和最长执行时间
     if (!min_us || q->exec_us < min_us) min_us = q->exec_us;
     if (q->exec_us > max_us) max_us = q->exec_us;
 
+	// 最小和最大覆盖率
     if (!min_bits || q->bitmap_size < min_bits) min_bits = q->bitmap_size;
     if (q->bitmap_size > max_bits) max_bits = q->bitmap_size;
 
+	// 最大case
     if (q->len > max_len) max_len = q->len;
 
     q = q->next;
@@ -4464,6 +4622,7 @@ static void show_init_stats(void) {
 
   SAYF("\n");
 
+  // 警告平均速度太慢
   if (avg_us > (qemu_mode ? 50000 : 10000)) 
     WARNF(cLRD "The target binary is pretty slow! See %s/perf_tips.txt.",
           doc_path);
@@ -4558,6 +4717,8 @@ static u32 next_p2(u32 val) {
    trimmer uses power-of-two increments somewhere between 1/16 and 1/1024 of
    file size, to keep the stage short and sweet. */
 
+// 逐步尝试删除len/16到len/1024的长度的内容
+// 若bitmap没变 就保存更改
 static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
 
   static u8 tmp[64];
@@ -4572,36 +4733,47 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
      detected, it will still work to some extent, so we don't check for
      this. */
 
+  // 若case小于5字节 直接返回
   if (q->len < 5) return 0;
 
   stage_name = tmp;
+  // 记录被trim过的字节数
   bytes_trim_in += q->len;
 
   /* Select initial chunk len, starting with large steps. */
 
+  // 向上取整到2^n
   len_p2 = next_p2(q->len);
 
+  // 起始删除步长为 len_p2 / 16
   remove_len = MAX(len_p2 / TRIM_START_STEPS, TRIM_MIN_BYTES);
 
   /* Continue until the number of steps gets too high or the stepover
      gets too small. */
 
+  // 终止删除步长为 len_p2 / 1024 与 4 的最大值
   while (remove_len >= MAX(len_p2 / TRIM_END_STEPS, TRIM_MIN_BYTES)) {
 
     u32 remove_pos = remove_len;
 
+	// 设置stage名
     sprintf(tmp, "trim %s/%s", DI(remove_len), DI(remove_len));
 
+	// stage轮次为 按删除步长遍历case一遍
     stage_cur = 0;
     stage_max = q->len / remove_len;
 
     while (remove_pos < q->len) {
 
+	  // 从remove_len位置开始
       u32 trim_avail = MIN(remove_len, q->len - remove_pos);
       u32 cksum;
 
+	  // 删除从remove_pos位置开始remove_len长度的内容
+	  // 直接删除 不是用0填充
       write_with_gap(in_buf, q->len, remove_pos, trim_avail);
 
+	  // 跑一遍
       fault = run_target(argv, exec_tmout);
       trim_execs++;
 
@@ -4609,6 +4781,7 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
 
       /* Note that we don't keep track of crashes or hangs here; maybe TODO? */
 
+	  // 计算校验和
       cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 
       /* If the deletion had no impact on the trace, make it permanent. This
@@ -4616,10 +4789,13 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
          best-effort pass, so it's not a big deal if we end up with false
          negatives every now and then. */
 
+	  // 若和trim之前没有区别
       if (cksum == q->exec_cksum) {
 
+		// 那就直接修改这个case
         u32 move_tail = q->len - remove_pos - trim_avail;
 
+		// 更新一下长度
         q->len -= trim_avail;
         len_p2  = next_p2(q->len);
 
@@ -4629,22 +4805,28 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
         /* Let's save a clean trace, which will be needed by
            update_bitmap_score once we're done with the trimming stuff. */
 
+		// 因为修改了case 所以之后需要回写到文件
         if (!needs_write) {
 
+		  // 将trace_bits保存到clean_trace 防止之后被修改
           needs_write = 1;
           memcpy(clean_trace, trace_bits, MAP_SIZE);
 
         }
 
+	  // 修改后相当于移动了remove_pos
+	  // 所以只有else需要+=操作
       } else remove_pos += remove_len;
 
       /* Since this can be slow, update the screen every now and then. */
 
+	  // 刷新显示
       if (!(trim_exec++ % stats_update_freq)) show_stats();
       stage_cur++;
 
     }
 
+	// 将删除步长减小一倍
     remove_len >>= 1;
 
   }
@@ -4656,6 +4838,7 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
 
     s32 fd;
 
+	// 将trim后的case重新写入到文件中
     unlink(q->fname); /* ignore errors */
 
     fd = open(q->fname, O_WRONLY | O_CREAT | O_EXCL, 0600);
@@ -4665,7 +4848,9 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
     ck_write(fd, in_buf, q->len, q->fname);
     close(fd);
 
+	// 恢复trace_bits
     memcpy(trace_bits, clean_trace, MAP_SIZE);
+	// 更新score 因为case长度会造成影响
     update_bitmap_score(q);
 
   }
@@ -4693,14 +4878,17 @@ EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
 
   }
 
+  // 将case写入输入文件
   write_to_testcase(out_buf, len);
 
+  // 运行case
   fault = run_target(argv, exec_tmout);
 
   if (stop_soon) return 1;
 
   if (fault == FAULT_TMOUT) {
 
+	// 连续超时次数超过阈值
     if (subseq_tmouts++ > TMOUT_LIMIT) {
       cur_skipped_paths++;
       return 1;
@@ -4721,8 +4909,10 @@ EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
 
   /* This handles FAULT_ERROR for us: */
 
+  // 判断该case是否insteresting 
   queued_discovered += save_if_interesting(argv, out_buf, len, fault);
 
+  // 更新前端
   if (!(stage_cur % stats_update_freq) || stage_cur + 1 == stage_max)
     show_stats();
 
@@ -4788,6 +4978,7 @@ static u32 calculate_score(struct queue_entry* q) {
      global average. Multiplier ranges from 0.1x to 3x. Fast inputs are
      less expensive to fuzz, so we're giving them more air time. */
 
+  // 执行得越快 分数越高
   if (q->exec_us * 0.1 > avg_exec_us) perf_score = 10;
   else if (q->exec_us * 0.25 > avg_exec_us) perf_score = 25;
   else if (q->exec_us * 0.5 > avg_exec_us) perf_score = 50;
@@ -4799,6 +4990,7 @@ static u32 calculate_score(struct queue_entry* q) {
   /* Adjust score based on bitmap size. The working theory is that better
      coverage translates to better targets. Multiplier from 0.25x to 3x. */
 
+  // 覆盖率越高 分数越高
   if (q->bitmap_size * 0.3 > avg_bitmap_size) perf_score *= 3;
   else if (q->bitmap_size * 0.5 > avg_bitmap_size) perf_score *= 2;
   else if (q->bitmap_size * 0.75 > avg_bitmap_size) perf_score *= 1.5;
@@ -4810,6 +5002,7 @@ static u32 calculate_score(struct queue_entry* q) {
      in the game we learned about this path. Latecomers are allowed to run
      for a bit longer until they catch up with the rest. */
 
+  // 获得该case所执行的轮数越多 分数越高
   if (q->handicap >= 4) {
 
     perf_score *= 4;
@@ -4826,6 +5019,8 @@ static u32 calculate_score(struct queue_entry* q) {
      deeper test cases is more likely to reveal stuff that can't be
      discovered with traditional fuzzers. */
 
+  // depth大概是变异的“深度”
+  // 在add_to_queue的时候会depth+1
   switch (q->depth) {
 
     case 0 ... 3:   break;
@@ -5057,6 +5252,10 @@ static u8 fuzz_one(char** argv) {
 #else
 
   if (pending_favored) {
+	
+	// 若还存在pending_favored case
+	// 且当前case已经被fuzz过且不是favored
+	// 那么99%的可能跳过该case
 
     /* If we have any favored, non-fuzzed new arrivals in the queue,
        possibly skip to them at the expense of already-fuzzed or non-favored
@@ -5066,17 +5265,24 @@ static u8 fuzz_one(char** argv) {
         UR(100) < SKIP_TO_NEW_PROB) return 1;
 
   } else if (!dumb_mode && !queue_cur->favored && queued_paths > 10) {
+	
+	// 若不是dumb mode
+	// 且当前case不是favored
+	// 且queue中case数大于10
 
     /* Otherwise, still possibly skip non-favored cases, albeit less often.
        The odds of skipping stuff are higher for already-fuzzed inputs and
        lower for never-fuzzed entries. */
 
     if (queue_cycle > 1 && !queue_cur->was_fuzzed) {
-
+	
+	  // 若这个case之前被跳过了
+	  // 那么有75%的几率再跳过
       if (UR(100) < SKIP_NFAV_NEW_PROB) return 1;
 
     } else {
 
+	  // 否则 有95%的几率跳过
       if (UR(100) < SKIP_NFAV_OLD_PROB) return 1;
 
     }
@@ -5092,13 +5298,15 @@ static u8 fuzz_one(char** argv) {
   }
 
   /* Map the test case into memory. */
-
+  // 打开case 
   fd = open(queue_cur->fname, O_RDONLY);
 
   if (fd < 0) PFATAL("Unable to open '%s'", queue_cur->fname);
 
+  // 获取case的长度
   len = queue_cur->len;
 
+  // 将case映射到内存
   orig_in = in_buf = mmap(0, len, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
 
   if (orig_in == MAP_FAILED) PFATAL("Unable to mmap '%s'", queue_cur->fname);
@@ -5109,6 +5317,7 @@ static u8 fuzz_one(char** argv) {
      single byte anyway, so it wouldn't give us any performance or memory usage
      benefits. */
 
+  // 申请out_buf空间
   out_buf = ck_alloc_nozero(len);
 
   subseq_tmouts = 0;
@@ -5119,10 +5328,12 @@ static u8 fuzz_one(char** argv) {
    * CALIBRATION (only if failed earlier on) *
    *******************************************/
 
+  // 若该case之前calibration有错误
   if (queue_cur->cal_failed) {
 
     u8 res = FAULT_TMOUT;
 
+	// 3次机会
     if (queue_cur->cal_failed < CAL_CHANCES) {
 
       /* Reset exec_cksum to tell calibrate_case to re-execute the testcase
@@ -5131,6 +5342,7 @@ static u8 fuzz_one(char** argv) {
 
       queue_cur->exec_cksum = 0;
 
+	  // 再校准一次
       res = calibrate_case(argv, queue_cur, in_buf, queue_cycle - 1, 0);
 
       if (res == FAULT_ERROR)
@@ -5149,8 +5361,10 @@ static u8 fuzz_one(char** argv) {
    * TRIMMING *
    ************/
 
+  // 若不是dumb模式且没有trim_done
   if (!dumb_mode && !queue_cur->trim_done) {
 
+	// 修剪case
     u8 res = trim_case(argv, queue_cur, in_buf);
 
     if (res == FAULT_ERROR)
@@ -5163,39 +5377,49 @@ static u8 fuzz_one(char** argv) {
 
     /* Don't retry trimming, even if it failed. */
 
+	// 标记trim_done
     queue_cur->trim_done = 1;
 
+	// 更新case长度
     if (len != queue_cur->len) len = queue_cur->len;
 
   }
 
+  // 将trim阶段后的case拷贝到out_buf
+  // 此后out_buf会用于变异
   memcpy(out_buf, in_buf, len);
 
   /*********************
    * PERFORMANCE SCORE *
    *********************/
 
+  // 计算case的得分
   orig_perf = perf_score = calculate_score(queue_cur);
 
   /* Skip right away if -d is given, if we have done deterministic fuzzing on
      this entry ourselves (was_fuzzed), or if it has gone through deterministic
      testing in earlier, resumed runs (passed_det). */
 
+  // 是否跳过deterministic fuzz
+  // 从fuzzer的skip_deterministic == 1
   if (skip_deterministic || queue_cur->was_fuzzed || queue_cur->passed_det)
     goto havoc_stage;
 
   /* Skip deterministic fuzzing if exec path checksum puts this out of scope
      for this master instance. */
 
+  // 若是多master模式 则判断该case是否由该master负责deterministic变异
   if (master_max && (queue_cur->exec_cksum % master_max) != master_id - 1)
     goto havoc_stage;
 
+  // 标记正在deterministic fuzzing
   doing_det = 1;
 
   /*********************************************
    * SIMPLE BITFLIP (+dictionary construction) *
    *********************************************/
 
+// 对数组_ar的第_b位进行翻转
 #define FLIP_BIT(_ar, _b) do { \
     u8* _arf = (u8*)(_ar); \
     u32 _bf = (_b); \
@@ -5204,6 +5428,7 @@ static u8 fuzz_one(char** argv) {
 
   /* Single walking bit. */
 
+  // 设置stage轮次为case的位数
   stage_short = "flip1";
   stage_max   = len << 3;
   stage_name  = "bitflip 1/1";
@@ -5212,16 +5437,22 @@ static u8 fuzz_one(char** argv) {
 
   orig_hit_cnt = queued_paths + unique_crashes;
 
+  // 保存最初的checksum 
   prev_cksum = queue_cur->exec_cksum;
 
+  // 开始按位遍历整个case
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
 
+	// 当前要变异的字节
     stage_cur_byte = stage_cur >> 3;
 
+	// 翻转out_buf的stage_cur位
     FLIP_BIT(out_buf, stage_cur);
 
+	// 运行并判断interesting
     if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
 
+	// 恢复bit
     FLIP_BIT(out_buf, stage_cur);
 
     /* While flipping the least significant bit in every byte, pull of an extra
@@ -5251,30 +5482,40 @@ static u8 fuzz_one(char** argv) {
 
       */
 
+	// 若是当前为一个字节的最低位
     if (!dumb_mode && (stage_cur & 7) == 7) {
 
+	  // 获取case的checksum
       u32 cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 
+	  // 如果当前是最后一位且checksum和上一次相同
       if (stage_cur == stage_max - 1 && cksum == prev_cksum) {
 
         /* If at end of file and we are still collecting a string, grab the
            final character and force output. */
 
+		// 将当前字节加入到a_collect
         if (a_len < MAX_AUTO_EXTRA) a_collect[a_len] = out_buf[stage_cur >> 3];
         a_len++;
 
+		// 若token的长度在3~32之间 则添加到auto_extras中
         if (a_len >= MIN_AUTO_EXTRA && a_len <= MAX_AUTO_EXTRA)
           maybe_add_auto(a_collect, a_len);
 
       } else if (cksum != prev_cksum) {
+		// 当发现checksum和上一次不同时
 
         /* Otherwise, if the checksum has changed, see if we have something
            worthwhile queued up, and collect that if the answer is yes. */
 
+		// 若累计的a_len长度符合一个token的大小
+		// 则添加到auto_extras
         if (a_len >= MIN_AUTO_EXTRA && a_len <= MAX_AUTO_EXTRA)
           maybe_add_auto(a_collect, a_len);
 
+		// 清除a_len
         a_len = 0;
+		// 记录变化后的checksum
         prev_cksum = cksum;
 
       }
@@ -5282,6 +5523,8 @@ static u8 fuzz_one(char** argv) {
       /* Continue collecting string, but only if the bit flip actually made
          any difference - we don't want no-op tokens. */
 
+	  // 当checksum与初始checksum不同
+	  // 则添加到a_collect 等待触发上面代码的maybe_add_auto
       if (cksum != queue_cur->exec_cksum) {
 
         if (a_len < MAX_AUTO_EXTRA) a_collect[a_len] = out_buf[stage_cur >> 3];        
@@ -5295,11 +5538,12 @@ static u8 fuzz_one(char** argv) {
 
   new_hit_cnt = queued_paths + unique_crashes;
 
+  // 记录stage FLIP1的新发现 
   stage_finds[STAGE_FLIP1]  += new_hit_cnt - orig_hit_cnt;
   stage_cycles[STAGE_FLIP1] += stage_max;
 
   /* Two walking bits. */
-
+  // 第二阶段 同时翻转相邻两位
   stage_name  = "bitflip 2/1";
   stage_short = "flip2";
   stage_max   = (len << 3) - 1;
@@ -5326,7 +5570,7 @@ static u8 fuzz_one(char** argv) {
   stage_cycles[STAGE_FLIP2] += stage_max;
 
   /* Four walking bits. */
-
+  // 第三阶段 同时翻转相邻4位
   stage_name  = "bitflip 4/1";
   stage_short = "flip4";
   stage_max   = (len << 3) - 3;
@@ -5372,6 +5616,7 @@ static u8 fuzz_one(char** argv) {
   /* Initialize effector map for the next step (see comments below). Always
      flag first and last byte as doing something. */
 
+  // 分配effector空间 大小为len / 8
   eff_map    = ck_alloc(EFF_ALEN(len));
   eff_map[0] = 1;
 
@@ -5381,7 +5626,7 @@ static u8 fuzz_one(char** argv) {
   }
 
   /* Walking byte. */
-
+  // 第四阶段 每次翻转一个字节
   stage_name  = "bitflip 8/8";
   stage_short = "flip8";
   stage_max   = len;
@@ -5392,6 +5637,7 @@ static u8 fuzz_one(char** argv) {
 
     stage_cur_byte = stage_cur;
 
+	// 直接用异或来翻转
     out_buf[stage_cur] ^= 0xFF;
 
     if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
@@ -5401,6 +5647,9 @@ static u8 fuzz_one(char** argv) {
        even when fully flipped - and we skip them during more expensive
        deterministic stages, such as arithmetics or known ints. */
 
+	// 如果当前字节没有被标记
+	// 值得注意的是 eff_map相当于将8字节捆绑在一起了
+	// 也就是一个字节会影响它所在的8字节块
     if (!eff_map[EFF_APOS(stage_cur)]) {
 
       u32 cksum;
@@ -5408,11 +5657,17 @@ static u8 fuzz_one(char** argv) {
       /* If in dumb mode or if the file is very short, just flag everything
          without wasting time on checksums. */
 
+	  // 若case超过128字节 则计算checksum
+	  // 否则 直接改变checksum 直接将每个字节都作为有效的
       if (!dumb_mode && len >= EFF_MIN_LEN)
         cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
       else
         cksum = ~queue_cur->exec_cksum;
 
+	  // 若checksum不同 标记该字节所在的8字节块为有效的
+	  // 这么做的逻辑是 这是继extras之后第二处启发式fuzz trick
+	  // 若checksum不变 则可能该处数据为DATA部分 对fuzz影响不大
+	  // 若checksum变了 则可能该处为METADATA之类的 对fuzz意义较大
       if (cksum != queue_cur->exec_cksum) {
         eff_map[EFF_APOS(stage_cur)] = 1;
         eff_cnt++;
@@ -5420,6 +5675,7 @@ static u8 fuzz_one(char** argv) {
 
     }
 
+	// 恢复翻转
     out_buf[stage_cur] ^= 0xFF;
 
   }
@@ -5428,6 +5684,8 @@ static u8 fuzz_one(char** argv) {
      whole thing as worth fuzzing, since we wouldn't be saving much time
      anyway. */
 
+  // 若发现90%的字节都是有效的
+  // 则直接将所有字节设为有效
   if (eff_cnt != EFF_ALEN(len) &&
       eff_cnt * 100 / EFF_ALEN(len) > EFF_MAX_PERC) {
 
@@ -5450,6 +5708,7 @@ static u8 fuzz_one(char** argv) {
 
   /* Two walking bytes. */
 
+  // 按两字节为单位进行翻转
   if (len < 2) goto skip_bitflip;
 
   stage_name  = "bitflip 16/8";
@@ -5463,6 +5722,7 @@ static u8 fuzz_one(char** argv) {
 
     /* Let's consult the effector map... */
 
+	// 若当前字节未被标记为有效的 则跳过
     if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)]) {
       stage_max--;
       continue;
@@ -5489,6 +5749,7 @@ static u8 fuzz_one(char** argv) {
 
   /* Four walking bytes. */
 
+  // 以四字节为单位翻转
   stage_name  = "bitflip 32/8";
   stage_short = "flip32";
   stage_cur   = 0;
@@ -5499,6 +5760,7 @@ static u8 fuzz_one(char** argv) {
   for (i = 0; i < len - 3; i++) {
 
     /* Let's consult the effector map... */
+	// 检查eff_map
     if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)] &&
         !eff_map[EFF_APOS(i + 2)] && !eff_map[EFF_APOS(i + 3)]) {
       stage_max--;
@@ -5529,24 +5791,30 @@ skip_bitflip:
    * ARITHMETIC INC/DEC *
    **********************/
 
+  // 算数运算变异阶段
   /* 8-bit arithmetics. */
 
+  // 循环轮数为 对每个字节 从 -ARITH_MAX ~ ARITH_MAX
   stage_name  = "arith 8/8";
   stage_short = "arith8";
   stage_cur   = 0;
   stage_max   = 2 * len * ARITH_MAX;
 
+  // 设置类型为小端序
   stage_val_type = STAGE_VAL_LE;
 
   orig_hit_cnt = new_hit_cnt;
 
   for (i = 0; i < len; i++) {
 
+	// 保存字节初始值
     u8 orig = out_buf[i];
 
     /* Let's consult the effector map... */
 
+	// 若字节被标记为不是有效的
     if (!eff_map[EFF_APOS(i)]) {
+	  // 跳过该字节
       stage_max -= 2 * ARITH_MAX;
       continue;
     }
@@ -5560,8 +5828,10 @@ skip_bitflip:
       /* Do arithmetic operations only if the result couldn't be a product
          of a bitflip. */
 
+	  // 判断该变异是否和前面bitfilp重复
       if (!could_be_bitflip(r)) {
 
+		// 对字节进行加法运算
         stage_cur_val = j;
         out_buf[i] = orig + j;
 
@@ -5574,6 +5844,7 @@ skip_bitflip:
 
       if (!could_be_bitflip(r)) {
 
+		// 对字节进行减法运算
         stage_cur_val = -j;
         out_buf[i] = orig - j;
 
@@ -5597,6 +5868,7 @@ skip_bitflip:
 
   if (len < 2) goto skip_arith;
 
+  // 两字节为单位进行算数运算变异
   stage_name  = "arith 16/8";
   stage_short = "arith16";
   stage_cur   = 0;
@@ -5610,6 +5882,7 @@ skip_bitflip:
 
     /* Let's consult the effector map... */
 
+	// 检查eff_map
     if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)]) {
       stage_max -= 4 * ARITH_MAX;
       continue;
@@ -5631,6 +5904,7 @@ skip_bitflip:
 
       stage_val_type = STAGE_VAL_LE; 
 
+	  // 两字节加法必须有进位才行 不然就和前面的单字节重复了
       if ((orig & 0xff) + j > 0xff && !could_be_bitflip(r1)) {
 
         stage_cur_val = j;
@@ -5641,6 +5915,7 @@ skip_bitflip:
  
       } else stage_max--;
 
+	  // 两字节减法必须有借位
       if ((orig & 0xff) < j && !could_be_bitflip(r2)) {
 
         stage_cur_val = -j;
@@ -5653,9 +5928,10 @@ skip_bitflip:
 
       /* Big endian comes next. Same deal. */
 
+	  // 改为大端序进行测试
       stage_val_type = STAGE_VAL_BE;
 
-
+	  // 同理 进行加法
       if ((orig >> 8) + j > 0xff && !could_be_bitflip(r3)) {
 
         stage_cur_val = j;
@@ -5666,6 +5942,7 @@ skip_bitflip:
 
       } else stage_max--;
 
+	  // 进行减法
       if ((orig >> 8) < j && !could_be_bitflip(r4)) {
 
         stage_cur_val = -j;
@@ -5691,6 +5968,7 @@ skip_bitflip:
 
   if (len < 4) goto skip_arith;
 
+  // 4字节算数运行变异
   stage_name  = "arith 32/8";
   stage_short = "arith32";
   stage_cur   = 0;
@@ -5704,6 +5982,7 @@ skip_bitflip:
 
     /* Let's consult the effector map... */
 
+	// 检查eff_map
     if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)] &&
         !eff_map[EFF_APOS(i + 2)] && !eff_map[EFF_APOS(i + 3)]) {
       stage_max -= 4 * ARITH_MAX;
@@ -5722,8 +6001,10 @@ skip_bitflip:
       /* Little endian first. Same deal as with 16-bit: we only want to
          try if the operation would have effect on more than two bytes. */
 
+	  // 小端序
       stage_val_type = STAGE_VAL_LE;
 
+	  // 加法前两字节必须有进位
       if ((orig & 0xffff) + j > 0xffff && !could_be_bitflip(r1)) {
 
         stage_cur_val = j;
@@ -5734,6 +6015,7 @@ skip_bitflip:
 
       } else stage_max--;
 
+	  // 减法前两字节必须借位
       if ((orig & 0xffff) < j && !could_be_bitflip(r2)) {
 
         stage_cur_val = -j;
@@ -5746,8 +6028,10 @@ skip_bitflip:
 
       /* Big endian next. */
 
+	  // 改为大端序运算
       stage_val_type = STAGE_VAL_BE;
 
+	  // 加法
       if ((SWAP32(orig) & 0xffff) + j > 0xffff && !could_be_bitflip(r3)) {
 
         stage_cur_val = j;
@@ -5758,6 +6042,7 @@ skip_bitflip:
 
       } else stage_max--;
 
+	  // 减法
       if ((SWAP32(orig) & 0xffff) < j && !could_be_bitflip(r4)) {
 
         stage_cur_val = -j;
@@ -5784,24 +6069,29 @@ skip_arith:
   /**********************
    * INTERESTING VALUES *
    **********************/
+  // 进入替换阶段
 
+  // 先替换8位的值
   stage_name  = "interest 8/8";
   stage_short = "int8";
   stage_cur   = 0;
   stage_max   = len * sizeof(interesting_8);
 
+  // 设为小端序
   stage_val_type = STAGE_VAL_LE;
 
   orig_hit_cnt = new_hit_cnt;
 
   /* Setting 8-bit integers. */
 
+  // 按字节遍历case
   for (i = 0; i < len; i++) {
 
     u8 orig = out_buf[i];
 
     /* Let's consult the effector map... */
 
+	// 检查该字节是否标记有效
     if (!eff_map[EFF_APOS(i)]) {
       stage_max -= sizeof(interesting_8);
       continue;
@@ -5813,12 +6103,14 @@ skip_arith:
 
       /* Skip if the value could be a product of bitflips or arithmetics. */
 
+	  // 跳过与位翻转 算术运行结果相同的case
       if (could_be_bitflip(orig ^ (u8)interesting_8[j]) ||
           could_be_arith(orig, (u8)interesting_8[j], 1)) {
         stage_max--;
         continue;
       }
 
+	  // 进行替换
       stage_cur_val = interesting_8[j];
       out_buf[i] = interesting_8[j];
 
@@ -5838,6 +6130,7 @@ skip_arith:
 
   /* Setting 16-bit integers, both endians. */
 
+  // 按16位进行替换
   if (no_arith || len < 2) goto skip_interest;
 
   stage_name  = "interest 16/8";
@@ -5908,6 +6201,7 @@ skip_arith:
 
   /* Setting 32-bit integers, both endians. */
 
+  // 以4字节位单位替换
   stage_name  = "interest 32/8";
   stage_short = "int32";
   stage_cur   = 0;
@@ -5978,11 +6272,14 @@ skip_interest:
   /********************
    * DICTIONARY STUFF *
    ********************/
+  // 开始字典阶段
 
+  // 判断是否有用户提供的token
   if (!extras_cnt) goto skip_user_extras;
 
   /* Overwrite with user-supplied extras. */
 
+  // 使用token去替换case中的内容
   stage_name  = "user extras (over)";
   stage_short = "ext_UO";
   stage_cur   = 0;
@@ -5992,6 +6289,7 @@ skip_interest:
 
   orig_hit_cnt = new_hit_cnt;
 
+  // 遍历case的每一个位置
   for (i = 0; i < len; i++) {
 
     u32 last_len = 0;
@@ -6010,6 +6308,10 @@ skip_interest:
          is redundant, or if its entire span has no bytes set in the effector
          map. */
 
+	  // 若extras数量超过阈值 则按一定概率跳过
+	  // 若token的长度大于case当前位置的剩余长度 跳过
+	  // 若token与case当前位置内容相同 跳过
+	  // 若case当前欲替换的内容全为无效的 跳过
       if ((extras_cnt > MAX_DET_EXTRAS && UR(extras_cnt) >= MAX_DET_EXTRAS) ||
           extras[j].len > len - i ||
           !memcmp(extras[j].data, out_buf + i, extras[j].len) ||
@@ -6041,6 +6343,7 @@ skip_interest:
 
   /* Insertion of user-supplied extras. */
 
+  // 将token插入到case中去
   stage_name  = "user extras (insert)";
   stage_short = "ext_UI";
   stage_cur   = 0;
@@ -6048,6 +6351,7 @@ skip_interest:
 
   orig_hit_cnt = new_hit_cnt;
 
+  // 申请一个临时空间用于存放插入后的case
   ex_tmp = ck_alloc(len + MAX_DICT_FILE);
 
   for (i = 0; i <= len; i++) {
@@ -6056,6 +6360,7 @@ skip_interest:
 
     for (j = 0; j < extras_cnt; j++) {
 
+	  // 输入大小阈值
       if (len + extras[j].len > MAX_FILE) {
         stage_max--; 
         continue;
@@ -6076,6 +6381,7 @@ skip_interest:
 
     }
 
+	// 艹 这优化有意思
     /* Copy head */
     ex_tmp[i] = out_buf[i];
 
@@ -6092,6 +6398,7 @@ skip_user_extras:
 
   if (!a_extras_cnt) goto skip_extras;
 
+  // 然后是使用自动收集的token进行覆盖变异
   stage_name  = "auto extras (over)";
   stage_short = "ext_AO";
   stage_cur   = 0;
@@ -6145,6 +6452,7 @@ skip_extras:
      we're properly done with deterministic steps and can mark it as such
      in the .state/ directory. */
 
+  // 标记deterministic变异阶段已经结束了
   if (!queue_cur->passed_det) mark_as_det_done(queue_cur);
 
   /****************
@@ -6153,6 +6461,7 @@ skip_extras:
 
 havoc_stage:
 
+  // 然后就开始随机变异了
   stage_cur_byte = -1;
 
   /* The havoc stage mutation code is also invoked when splicing files; if the
@@ -6618,6 +6927,9 @@ havoc_stage:
 
 retry_splicing:
 
+  // 若出现一轮未发现任何新路径
+  // 则触发slpicing 
+
   if (use_splicing && splice_cycle++ < SPLICE_CYCLES &&
       queued_paths > 1 && queue_cur->len > 1) {
 
@@ -6629,6 +6941,7 @@ retry_splicing:
     /* First of all, if we've modified in_buf for havoc, let's clean that
        up... */
 
+	// 恢复随机变异
     if (in_buf != orig_in) {
       ck_free(in_buf);
       in_buf = orig_in;
@@ -6637,6 +6950,7 @@ retry_splicing:
 
     /* Pick a random queue entry and seek to it. Don't splice with yourself. */
 
+	// 在队列中随机选一个case
     do { tid = UR(queued_paths); } while (tid == current_entry);
 
     splicing_with = tid;
@@ -6647,6 +6961,7 @@ retry_splicing:
 
     /* Make sure that the target has a reasonable length. */
 
+	// 若随机选的case太短 或者 就是当前case 则依次向后选择
     while (target && (target->len < 2 || target == queue_cur)) {
       target = target->next;
       splicing_with++;
@@ -6656,6 +6971,7 @@ retry_splicing:
 
     /* Read the testcase into a new buffer. */
 
+	//读取目标case到内存中
     fd = open(target->fname, O_RDONLY);
 
     if (fd < 0) PFATAL("Unable to open '%s'", target->fname);
@@ -6670,6 +6986,7 @@ retry_splicing:
        the last differing byte. Bail out if the difference is just a single
        byte or so. */
 
+	// 找到两个文件第一处和最后一处不同的位置
     locate_diffs(in_buf, new_buf, MIN(len, target->len), &f_diff, &l_diff);
 
     if (f_diff < 0 || l_diff < 2 || f_diff == l_diff) {
@@ -6679,10 +6996,12 @@ retry_splicing:
 
     /* Split somewhere between the first and last differing byte. */
 
+	// 在第一处和最后一处不同位置之间 随机选一处
     split_at = f_diff + UR(l_diff - f_diff);
 
     /* Do the thing. */
 
+	// 将本case的前半部分和目标case的后半部分组合
     len = target->len;
     memcpy(new_buf, in_buf, split_at);
     in_buf = new_buf;
@@ -6691,6 +7010,7 @@ retry_splicing:
     out_buf = ck_alloc_nozero(len);
     memcpy(out_buf, in_buf, len);
 
+	// 然后回到随机变异
     goto havoc_stage;
 
   }
@@ -6706,6 +7026,7 @@ abandon_entry:
   /* Update pending_not_fuzzed count if we made it through the calibration
      cycle and have not seen this entry before. */
 
+  // 更新标记该case已经被fuzz过了
   if (!stop_soon && !queue_cur->cal_failed && !queue_cur->was_fuzzed) {
     queue_cur->was_fuzzed = 1;
     pending_not_fuzzed--;
@@ -6727,12 +7048,15 @@ abandon_entry:
 
 /* Grab interesting test cases from other fuzzers. */
 
+// 主要就是遍历sync文件夹中的queue
+// 将其中interesting的case加入自己的队列
 static void sync_fuzzers(char** argv) {
 
   DIR* sd;
   struct dirent* sd_ent;
   u32 sync_cnt = 0;
 
+  // 打开sync_dir
   sd = opendir(sync_dir);
   if (!sd) PFATAL("Unable to open '%s'", sync_dir);
 
@@ -6741,6 +7065,7 @@ static void sync_fuzzers(char** argv) {
 
   /* Look at the entries created for every other fuzzer in the sync directory. */
 
+  // 遍历sync目录
   while ((sd_ent = readdir(sd))) {
 
     static u8 stage_tmp[128];
@@ -6753,11 +7078,11 @@ static void sync_fuzzers(char** argv) {
     s32 id_fd;
 
     /* Skip dot files and our own output directory. */
-
+	// 跳过自身的目录
     if (sd_ent->d_name[0] == '.' || !strcmp(sync_id, sd_ent->d_name)) continue;
 
     /* Skip anything that doesn't have a queue/ subdirectory. */
-
+	// 打开该目录中的$sd_ent/queue子目录
     qd_path = alloc_printf("%s/%s/queue", sync_dir, sd_ent->d_name);
 
     if (!(qd = opendir(qd_path))) {
@@ -6766,20 +7091,23 @@ static void sync_fuzzers(char** argv) {
     }
 
     /* Retrieve the ID of the last seen test case. */
-
+	// 获取该sync文件夹中上一次同步到的case id
+	// 打开out_dir/.synced/xxxx
     qd_synced_path = alloc_printf("%s/.synced/%s", out_dir, sd_ent->d_name);
 
     id_fd = open(qd_synced_path, O_RDWR | O_CREAT, 0600);
 
     if (id_fd < 0) PFATAL("Unable to create '%s'", qd_synced_path);
 
+	// 读取4字节数据到min_accept
+	// 也就是上一次同步到的case位置
     if (read(id_fd, &min_accept, sizeof(u32)) > 0) 
       lseek(id_fd, 0, SEEK_SET);
 
     next_min_accept = min_accept;
 
     /* Show stats */    
-
+	// 设置stage名为 sycn xx
     sprintf(stage_tmp, "sync %u", ++sync_cnt);
     stage_name = stage_tmp;
     stage_cur  = 0;
@@ -6788,21 +7116,25 @@ static void sync_fuzzers(char** argv) {
     /* For every file queued by this fuzzer, parse ID and see if we have looked at
        it before; exec a test case if not. */
 
+	// 遍历queue子目录
     while ((qd_ent = readdir(qd))) {
 
       u8* path;
       s32 fd;
       struct stat st;
 
+	  // 获取case id 快进到min_accept
       if (qd_ent->d_name[0] == '.' ||
           sscanf(qd_ent->d_name, CASE_PREFIX "%06u", &syncing_case) != 1 || 
           syncing_case < min_accept) continue;
 
       /* OK, sounds like a new one. Let's give it a try. */
 
+	  // 更新next_min_accept
       if (syncing_case >= next_min_accept)
         next_min_accept = syncing_case + 1;
 
+	  // 打开case
       path = alloc_printf("%s/%s", qd_path, qd_ent->d_name);
 
       /* Allow this to fail in case the other fuzzer is resuming or so... */
@@ -6817,10 +7149,11 @@ static void sync_fuzzers(char** argv) {
       if (fstat(fd, &st)) PFATAL("fstat() failed");
 
       /* Ignore zero-sized or oversized files. */
-
+	  // 忽略空文件 和 太大的case
       if (st.st_size && st.st_size <= MAX_FILE) {
 
         u8  fault;
+		// 将文件映射到内存
         u8* mem = mmap(0, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 
         if (mem == MAP_FAILED) PFATAL("Unable to mmap '%s'", path);
@@ -6828,18 +7161,24 @@ static void sync_fuzzers(char** argv) {
         /* See what happens. We rely on save_if_interesting() to catch major
            errors and save the test case. */
 
+		// 将case文件作为下一个输入
         write_to_testcase(mem, st.st_size);
 
+		// 运行一次测试
         fault = run_target(argv, exec_tmout);
 
         if (stop_soon) return;
 
+		// 设置当前同步的case
         syncing_party = sd_ent->d_name;
+		// 若为interesting 则 增加queued_imported计数
         queued_imported += save_if_interesting(argv, mem, st.st_size, fault);
+		// 结束同步
         syncing_party = 0;
 
         munmap(mem, st.st_size);
 
+		// 刷新
         if (!(stage_cur++ % stats_update_freq)) show_stats();
 
       }
@@ -6849,6 +7188,7 @@ static void sync_fuzzers(char** argv) {
 
     }
 
+	// 保存next_min_accept到id_fd
     ck_write(id_fd, &next_min_accept, sizeof(u32), qd_synced_path);
 
     close(id_fd);
@@ -7568,6 +7908,7 @@ static void fix_up_sync(void) {
   sync_dir = out_dir;
   out_dir  = x;
 
+  // 若没有force 则跳过
   if (!force_deterministic) {
     skip_deterministic = 1;
     use_splicing = 1;
@@ -7867,6 +8208,7 @@ int main(int argc, char** argv) {
 
           }
 
+		  // 对于主fuzzer 必须要进行deterministic变异
           force_deterministic = 1;
 
         }
@@ -8116,14 +8458,19 @@ int main(int argc, char** argv) {
   else
     use_argv = argv + optind;
 
+  // 对所有case先跑一次
   perform_dry_run(use_argv);
 
+  // 清除冗余case，精简队列
   cull_queue();
 
+  // 显示一些统计信息
   show_init_stats();
 
+  // 当resuming时 用于找打起始位置
   seek_to = find_start_position();
 
+  // 将统计信息写入out_dir/fuzzer_stats
   write_stats_file(0, 0, 0);
   save_auto();
 
@@ -8137,25 +8484,33 @@ int main(int argc, char** argv) {
     if (stop_soon) goto stop_fuzzing;
   }
 
+  // 正式进入FUZZ循环
   while (1) {
 
     u8 skipped_fuzz;
 
+	// 精简队列
     cull_queue();
 
+	// 若queue_cur为空
+	// 说明这是第一轮 或已经执行完一轮了
     if (!queue_cur) {
 
+	  // 增加计数
       queue_cycle++;
       current_entry     = 0;
       cur_skipped_paths = 0;
+	  // 设置queue_cur为队列头部
       queue_cur         = queue;
 
+	  // 若设置了起始点 快进到起点
       while (seek_to) {
         current_entry++;
         seek_to--;
         queue_cur = queue_cur->next;
       }
 
+	  // 刷新界面
       show_stats();
 
       if (not_on_tty) {
@@ -8166,23 +8521,31 @@ int main(int argc, char** argv) {
       /* If we had a full queue cycle with no new finds, try
          recombination strategies next. */
 
+	  // 如果上一轮没有新case
       if (queued_paths == prev_queued) {
 
+		// 增加cycles_wo_finds计数 触发splicing变异
         if (use_splicing) cycles_wo_finds++; else use_splicing = 1;
 
       } else cycles_wo_finds = 0;
 
+	  // 保存该轮cases数
       prev_queued = queued_paths;
 
+	  // 若存在sync_id 且这是第一轮
       if (sync_id && queue_cycle == 1 && getenv("AFL_IMPORT_FIRST"))
+		// 进行同步
         sync_fuzzers(use_argv);
 
     }
 
+	// 进行fuzz 变异
     skipped_fuzz = fuzz_one(use_argv);
 
+	// 若是并行模式运行
     if (!stop_soon && sync_id && !skipped_fuzz) {
       
+	  // 每5次循环需要一次同步
       if (!(sync_interval_cnt++ % SYNC_INTERVAL))
         sync_fuzzers(use_argv);
 
@@ -8192,6 +8555,7 @@ int main(int argc, char** argv) {
 
     if (stop_soon) break;
 
+	// 下一个case
     queue_cur = queue_cur->next;
     current_entry++;
 
